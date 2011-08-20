@@ -17,22 +17,53 @@ sub error ($) {
 
 sub main {
 
+	my %devices;
+
 	# Channel for communication with device discovery thread
-	my $dev_announcement = Coro::Channel->new();
+	my $dev_discoverer = Coro::Channel->new();
+
+	# Channel for communication with socket creation thread
+	my $sock_creator = Coro::Channel->new();
 
 	# Start device discovery thread
 	async {
-		try { await_device_announcement($dev_announcement) }
+		$Coro::current->{desc} = "device_discoverer";
+
+		try { await_device_announcement($dev_discoverer) }
 		catch {
 			error 'Could not listen for devices; is another instance running?';
 		};
 	};
 
-	while () {
-		#print STDERR ".";
-		if ( $dev_announcement->size() ) {
-			print STDERR $dev_announcement->get()->{'name'}, "\n"
+	# Start coordination thread
+	async {
+		$Coro::current->{desc} = "coordinator";
+
+		while () {
+			print STDERR '.';
+			if ( $dev_discoverer->size() ) {
+				my $dev = $dev_discoverer->get();
+
+				if ( !defined $devices{ $dev->{'name'} } ) {
+					# TODO check for IP address change then signal sock_creator to recreate
+					$devices{ $dev->{'name'} } = (
+						'addr' => $dev->{'addr'},
+						'port' => $dev->{'port'},
+					);
+					$sock_creator->put( $dev->{'name'} );
+					print STDERR $dev->{'name'}, "\n";
+				}
+				else {
+					print STDERR "IGNORING $dev->{'name'}\n";
+				}
+				sleep 1;
+			}
+			cede();
 		}
+	};
+
+	# Allow threads to run
+	while () {
 		cede();
 	}
 }
