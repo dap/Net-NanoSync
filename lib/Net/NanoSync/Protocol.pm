@@ -4,10 +4,14 @@ use strict;
 use warnings;
 
 use IO::Socket::Multicast;
-use Data::Dump::Streamer;
+use IO::Socket::IP;
 
 use base 'Exporter';
-our @EXPORT = qw/open_mcast_socket get_device_mcast/;
+our @EXPORT = qw/
+	open_mcast_socket
+	get_device_mcast
+	open_data_socket
+/;
 
 sub open_mcast_socket {
 	my $mcast_info = shift;
@@ -37,6 +41,17 @@ sub get_device_mcast {
 	$peer_addr = inet_ntoa($peer_addr);
 
 	return {'name' => "$1", 'addr' => $peer_addr, 'port' => $2};
+}
+
+sub open_data_socket {
+	my $socket_info = shift;
+
+	my $sock = IO::Socket::IP->new(
+		PeerHost => $socket_info->{'addr'},
+		PeerPort => $socket_info->{'port'},
+	) or die "Cannot construct socket - $@";
+
+	return $sock;
 }
 
 1;

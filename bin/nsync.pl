@@ -6,6 +6,7 @@ use warnings;
 use lib 'lib';
 
 use Coro;
+use Coro::Debug;
 use Try::Tiny;
 
 use Net::NanoSync::Coro;
@@ -25,6 +26,9 @@ sub main {
 	# Channel for communication with socket creation thread
 	my $sock_creator = Coro::Channel->new();
 
+	# Channel for communication with device communicator thread
+	my $dev_comm = Coro::Channel->new();
+
 	# Start device discovery thread
 	async {
 		$Coro::current->{desc} = "device_discoverer";
@@ -35,28 +39,40 @@ sub main {
 		};
 	};
 
+	# Start socket creator thread
+	async {
+		$Coro::current->{desc} = "socket_creator";
+
+		try { await_device_address($sock_creator, $dev_comm) }
+		catch {
+			# TODO Improve this error message
+			error "Could not connect to new device: $_";
+		}
+	}
+
+	# Start device communicator thread
+	async {
+		$Coro::current->{desc} = "device_communicator";
+
+		try { await_device_socket($dev_comm) }
+		catch {
+			# TODO Improve this error message
+			error 'Could not communicate with device.';
+		}
+	}
+
 	# Start coordination thread
 	async {
 		$Coro::current->{desc} = "coordinator";
 
 		while () {
-			print STDERR '.';
 			if ( $dev_discoverer->size() ) {
 				my $dev = $dev_discoverer->get();
 
-				if ( !defined $devices{ $dev->{'name'} } ) {
-					# TODO check for IP address change then signal sock_creator to recreate
-					$devices{ $dev->{'name'} } = (
-						'addr' => $dev->{'addr'},
-						'port' => $dev->{'port'},
-					);
-					$sock_creator->put( $dev->{'name'} );
-					print STDERR $dev->{'name'}, "\n";
+				if ( !exists $devices{$dev->{'name'}} ) {
+					$devices{$dev->{'name'}} = $dev;
+					$sock_creator->put( $devices{$dev->{'name'}} );
 				}
-				else {
-					print STDERR "IGNORING $dev->{'name'}\n";
-				}
-				sleep 1;
 			}
 			cede();
 		}
